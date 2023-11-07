@@ -163,7 +163,40 @@ impl HirDisplay for Struct {
         write!(f, "{}", self.name(f.db).display(f.db.upcast()))?;
         let def_id = GenericDefId::AdtId(AdtId::StructId(self.id));
         write_generic_params(def_id, f)?;
+
+        let field_is_tuple_index =
+            self.variant_data(f.db).fields().iter().any(|(_, f)| f.name.as_tuple_index().is_some());
+
+        if field_is_tuple_index {
+            f.write_char('(')?;
+            let variant_data = self.variant_data(f.db);
+            let mut it = variant_data.fields().iter().peekable();
+
+            while let Some((id, _)) = it.next() {
+                let field = Field { parent: (*self).into(), id };
+                field.ty(f.db).hir_fmt(f)?;
+                if it.peek().is_some() {
+                    f.write_str(", ")?;
+                }
+            }
+
+            f.write_str(");")?;
+            return Ok(());
+        }
+
         write_where_clause(def_id, f)?;
+
+        let fields = self.fields(f.db);
+        if !fields.is_empty() {
+            f.write_str("\n{\n")?;
+            for field in self.fields(f.db) {
+                f.write_str("    ")?;
+                field.hir_fmt(f)?;
+                f.write_str(",\n")?;
+            }
+            f.write_str("}")?;
+        }
+
         Ok(())
     }
 }
@@ -176,6 +209,18 @@ impl HirDisplay for Enum {
         let def_id = GenericDefId::AdtId(AdtId::EnumId(self.id));
         write_generic_params(def_id, f)?;
         write_where_clause(def_id, f)?;
+
+        let variants = self.variants(f.db);
+        if !variants.is_empty() {
+            f.write_str("\n{\n")?;
+            for variant in variants {
+                f.write_str("    ")?;
+                variant.hir_fmt(f)?;
+                f.write_str(",\n")?;
+            }
+            f.write_str("}")?;
+        }
+
         Ok(())
     }
 }
@@ -188,6 +233,18 @@ impl HirDisplay for Union {
         let def_id = GenericDefId::AdtId(AdtId::UnionId(self.id));
         write_generic_params(def_id, f)?;
         write_where_clause(def_id, f)?;
+
+        let fields = self.fields(f.db);
+        if !fields.is_empty() {
+            f.write_str(" {\n")?;
+            for field in self.fields(f.db) {
+                f.write_str("    ")?;
+                field.hir_fmt(f)?;
+                f.write_char('\n')?;
+            }
+            f.write_str("}")?;
+        }
+
         Ok(())
     }
 }
