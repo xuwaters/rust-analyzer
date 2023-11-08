@@ -1,6 +1,6 @@
 //! HirDisplay implementations for various hir types.
 use hir_def::{
-    data::adt::VariantData,
+    data::adt::{StructKind, VariantData},
     generics::{
         TypeOrConstParamData, TypeParamProvenance, WherePredicate, WherePredicateTypeTarget,
     },
@@ -164,12 +164,9 @@ impl HirDisplay for Struct {
         let def_id = GenericDefId::AdtId(AdtId::StructId(self.id));
         write_generic_params(def_id, f)?;
 
-        let field_is_tuple_index =
-            self.variant_data(f.db).fields().iter().any(|(_, f)| f.name.as_tuple_index().is_some());
-
-        if field_is_tuple_index {
+        let variant_data = self.variant_data(f.db);
+        if let StructKind::Tuple = variant_data.kind() {
             f.write_char('(')?;
-            let variant_data = self.variant_data(f.db);
             let mut it = variant_data.fields().iter().peekable();
 
             while let Some((id, _)) = it.next() {
@@ -181,14 +178,12 @@ impl HirDisplay for Struct {
             }
 
             f.write_str(");")?;
-            return Ok(());
         }
 
         write_where_clause(def_id, f)?;
 
-        let fields = self.fields(f.db);
-        if !fields.is_empty() {
-            f.write_str("\n{\n")?;
+        if let StructKind::Record = variant_data.kind() {
+            f.write_str(" {\n")?;
             for field in self.fields(f.db) {
                 f.write_str("    ")?;
                 field.hir_fmt(f)?;
@@ -212,7 +207,7 @@ impl HirDisplay for Enum {
 
         let variants = self.variants(f.db);
         if !variants.is_empty() {
-            f.write_str("\n{\n")?;
+            f.write_str(" {\n")?;
             for variant in variants {
                 f.write_str("    ")?;
                 variant.hir_fmt(f)?;
@@ -240,7 +235,7 @@ impl HirDisplay for Union {
             for field in self.fields(f.db) {
                 f.write_str("    ")?;
                 field.hir_fmt(f)?;
-                f.write_char('\n')?;
+                f.write_str(",\n")?;
             }
             f.write_str("}")?;
         }
