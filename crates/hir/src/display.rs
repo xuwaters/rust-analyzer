@@ -177,19 +177,24 @@ impl HirDisplay for Struct {
                 }
             }
 
-            f.write_str(");")?;
+            f.write_str(")")?;
         }
 
         write_where_clause(def_id, f)?;
 
         if let StructKind::Record = variant_data.kind() {
-            f.write_str(" {\n")?;
-            for field in self.fields(f.db) {
-                f.write_str("    ")?;
-                field.hir_fmt(f)?;
-                f.write_str(",\n")?;
+            let fields = self.fields(f.db);
+            if fields.is_empty() {
+                f.write_str(" {}")?;
+            } else {
+                f.write_str(" {\n")?;
+                for field in self.fields(f.db) {
+                    f.write_str("    ")?;
+                    field.hir_fmt(f)?;
+                    f.write_str(",\n")?;
+                }
+                f.write_str("}")?;
             }
-            f.write_str("}")?;
         }
 
         Ok(())
