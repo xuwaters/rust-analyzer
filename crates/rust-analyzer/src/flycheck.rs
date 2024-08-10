@@ -109,7 +109,7 @@ pub(crate) struct FlycheckHandle {
 impl FlycheckHandle {
     pub(crate) fn spawn(
         id: usize,
-        sender: Box<dyn Fn(FlycheckMessage) + Send>,
+        sender: Sender<FlycheckMessage>,
         config: FlycheckConfig,
         sysroot_root: Option<AbsPathBuf>,
         workspace_root: AbsPathBuf,
@@ -199,7 +199,7 @@ enum StateChange {
 struct FlycheckActor {
     /// The workspace id of this flycheck instance.
     id: usize,
-    sender: Box<dyn Fn(FlycheckMessage) + Send>,
+    sender: Sender<FlycheckMessage>,
     config: FlycheckConfig,
     manifest_path: Option<AbsPathBuf>,
     /// Either the workspace root of the workspace we are flychecking,
@@ -235,7 +235,7 @@ pub(crate) const SAVED_FILE_PLACEHOLDER: &str = "$saved_file";
 impl FlycheckActor {
     fn new(
         id: usize,
-        sender: Box<dyn Fn(FlycheckMessage) + Send>,
+        sender: Sender<FlycheckMessage>,
         config: FlycheckConfig,
         sysroot_root: Option<AbsPathBuf>,
         workspace_root: AbsPathBuf,
@@ -256,7 +256,7 @@ impl FlycheckActor {
     }
 
     fn report_progress(&self, progress: Progress) {
-        self.send(FlycheckMessage::Progress { id: self.id, progress });
+        self.sender.send(FlycheckMessage::Progress { id: self.id, progress }).unwrap();
     }
 
     fn next_event(&self, inbox: &Receiver<StateChange>) -> Option<Event> {
@@ -329,7 +329,9 @@ impl FlycheckActor {
                         );
                     }
                     if self.status == FlycheckStatus::Started {
-                        self.send(FlycheckMessage::ClearDiagnostics { id: self.id });
+                        self.sender
+                            .send(FlycheckMessage::ClearDiagnostics { id: self.id })
+                            .unwrap();
                     }
                     self.report_progress(Progress::DidFinish(res));
                     self.status = FlycheckStatus::Finished;
@@ -351,13 +353,17 @@ impl FlycheckActor {
                             "diagnostic received"
                         );
                         if self.status == FlycheckStatus::Started {
-                            self.send(FlycheckMessage::ClearDiagnostics { id: self.id });
+                            self.sender
+                                .send(FlycheckMessage::ClearDiagnostics { id: self.id })
+                                .unwrap();
                         }
-                        self.send(FlycheckMessage::AddDiagnostic {
-                            id: self.id,
-                            workspace_root: self.root.clone(),
-                            diagnostic: msg,
-                        });
+                        self.sender
+                            .send(FlycheckMessage::AddDiagnostic {
+                                id: self.id,
+                                workspace_root: self.root.clone(),
+                                diagnostic: msg,
+                            })
+                            .unwrap();
                         self.status = FlycheckStatus::DiagnosticSent;
                     }
                 },
@@ -476,10 +482,6 @@ impl FlycheckActor {
 
         cmd.args(args);
         Some(cmd)
-    }
-
-    fn send(&self, check_task: FlycheckMessage) {
-        (self.sender)(check_task);
     }
 }
 
