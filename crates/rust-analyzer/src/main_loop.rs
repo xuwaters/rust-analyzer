@@ -14,12 +14,13 @@ use lsp_server::{Connection, Notification, Request};
 use lsp_types::{notification::Notification as _, TextDocumentIdentifier};
 use stdx::thread::ThreadIntent;
 use tracing::{error, span, Level};
+use triomphe::Arc;
 use vfs::{loader::LoadingProgress, AbsPathBuf, FileId};
 
 use crate::{
     config::Config,
     diagnostics::{fetch_native_diagnostics, DiagnosticsGeneration, NativeDiagnosticsFetchKind},
-    discover::{DiscoverArgument, DiscoverCommand, DiscoverProjectMessage},
+    discover::{DiscoverArgument, DiscoverProjectJson, DiscoverProjectMessage},
     flycheck::{self, FlycheckMessage},
     global_state::{file_id_to_url, url_to_file_id, FetchWorkspaceRequest, GlobalState},
     hack_recover_crate_name,
@@ -113,6 +114,7 @@ pub(crate) enum Task {
 pub(crate) enum DiscoverProjectParam {
     Buildfile(AbsPathBuf),
     Path(AbsPathBuf),
+    ClassicOnDisk,
 }
 
 #[derive(Debug)]
@@ -159,8 +161,6 @@ impl fmt::Debug for Event {
 
 impl GlobalState {
     fn run(mut self, inbox: Receiver<lsp_server::Message>) -> anyhow::Result<()> {
-        self.update_status_or_notify();
-
         if self.config.did_save_text_document_dynamic_registration() {
             let additional_patterns = self
                 .config
@@ -172,17 +172,7 @@ impl GlobalState {
             self.register_did_save_capability(additional_patterns);
         }
 
-        if self.config.discover_workspace_config().is_none() {
-            self.fetch_workspaces_queue.request_op(
-                "startup".to_owned(),
-                FetchWorkspaceRequest { path: None, force_crate_graph_reload: false },
-            );
-            if let Some((cause, FetchWorkspaceRequest { path, force_crate_graph_reload })) =
-                self.fetch_workspaces_queue.should_start_op()
-            {
-                self.fetch_workspaces(cause, path, force_crate_graph_reload);
-            }
-        }
+        self.discover_workspace_queue.request_op("startup".to_owned(), ());
 
         while let Ok(event) = self.next_event(&inbox) {
             let Some(event) = event else {
@@ -699,13 +689,14 @@ impl GlobalState {
                 self.report_progress("Fetching", state, msg, None, None);
             }
             Task::DiscoverLinkedProjects(arg) => {
-                if let Some(cfg) = self.config.discover_workspace_config() {
-                    if !self.discover_workspace_queue.op_in_progress() {
+                if !self.discover_workspace_queue.op_in_progress() {
+                    if let Some(cfg) = self.config.discover_workspace_config() {
                         // the clone is unfortunately necessary to avoid a borrowck error when
                         // `self.report_progress` is called later
                         let title = &cfg.progress_label.clone();
                         let command = cfg.command.clone();
-                        let discover = DiscoverCommand::new(self.discover_sender.clone(), command);
+                        let discover =
+                            DiscoverProjectJson::new(self.discover_sender.clone(), command);
 
                         self.report_progress(title, Progress::Begin, None, None, None);
                         self.discover_workspace_queue
@@ -715,10 +706,19 @@ impl GlobalState {
                         let arg = match arg {
                             DiscoverProjectParam::Buildfile(it) => DiscoverArgument::Buildfile(it),
                             DiscoverProjectParam::Path(it) => DiscoverArgument::Path(it),
+                            _ => return, // this is a bug; the arg should not be sent if `discover_workspace_config` is set
                         };
 
                         let handle = discover.spawn(arg).unwrap();
                         self.discover_handle = Some(handle);
+                    } else {
+                        let config = Arc::make_mut(&mut self.config);
+                        config.rediscover_workspaces();
+
+                        let req =
+                            FetchWorkspaceRequest { path: None, force_crate_graph_reload: false };
+                        self.fetch_workspaces_queue
+                            .request_op("workspaces have been discovered".to_owned(), req);
                     }
                 }
             }
@@ -829,11 +829,18 @@ impl GlobalState {
                     let id = from_proto::file_id(&snap, &uri).expect("unable to get FileId");
                     if let Ok(crates) = &snap.analysis.crates_for(id) {
                         if crates.is_empty() {
-                            if snap.config.discover_workspace_config().is_some() {
-                                let path =
-                                    from_proto::abs_path(&uri).expect("Unable to get AbsPath");
-                                let arg = DiscoverProjectParam::Path(path);
-                                sender.send(Task::DiscoverLinkedProjects(arg)).unwrap();
+                            match snap.config.discover_workspace_config() {
+                                Some(_) => {
+                                    let path =
+                                        from_proto::abs_path(&uri).expect("Unable to get AbsPath");
+                                    let arg = DiscoverProjectParam::Path(path);
+                                    sender.send(Task::DiscoverLinkedProjects(arg)).unwrap();
+                                }
+                                // default behavior; do standard discovery
+                                None => {
+                                    let arg = DiscoverProjectParam::ClassicOnDisk;
+                                    sender.send(Task::DiscoverLinkedProjects(arg)).unwrap();
+                                }
                             }
                         } else {
                             tracing::debug!(?uri, "is indexed");

@@ -15,7 +15,8 @@ pub(crate) const ARG_PLACEHOLDER: &str = "{arg}";
 /// A command wrapper for getting a `rust-project.json`.
 ///
 /// This is analogous to discovering a cargo project + running `cargo-metadata` on it, but for non-Cargo build systems.
-pub(crate) struct DiscoverCommand {
+#[derive(Debug, Clone)]
+pub(crate) struct DiscoverProjectJson {
     command: Vec<String>,
     sender: Sender<DiscoverProjectMessage>,
 }
@@ -27,15 +28,7 @@ pub(crate) enum DiscoverArgument {
     Buildfile(#[serde(serialize_with = "serialize_abs_pathbuf")] AbsPathBuf),
 }
 
-fn serialize_abs_pathbuf<S>(path: &AbsPathBuf, se: S) -> Result<S::Ok, S::Error>
-where
-    S: serde::Serializer,
-{
-    let path: &Utf8Path = path.as_ref();
-    se.serialize_str(path.as_str())
-}
-
-impl DiscoverCommand {
+impl DiscoverProjectJson {
     /// Create a new [DiscoverCommand].
     pub(crate) fn new(sender: Sender<DiscoverProjectMessage>, command: Vec<String>) -> Self {
         Self { sender, command }
@@ -124,6 +117,14 @@ impl ParseFromLine for DiscoverProjectMessage {
     fn from_eof() -> Option<Self> {
         None
     }
+}
+
+fn serialize_abs_pathbuf<S>(path: &AbsPathBuf, se: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    let path: &Utf8Path = path.as_ref();
+    se.serialize_str(path.as_str())
 }
 
 #[test]

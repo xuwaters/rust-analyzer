@@ -515,7 +515,7 @@ impl Notification for ServerStatusNotification {
     const METHOD: &'static str = "experimental/serverStatus";
 }
 
-#[derive(Deserialize, Serialize, PartialEq, Eq, Clone)]
+#[derive(Deserialize, Serialize, PartialEq, Eq, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct ServerStatusParams {
     pub health: Health,
